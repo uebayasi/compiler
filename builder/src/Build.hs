@@ -30,6 +30,7 @@ import qualified Data.Name as Name
 import qualified Data.NonEmptyList as NE
 import qualified Data.OneOrMore as OneOrMore
 import qualified Data.Set as Set
+import qualified System.Clock as SC
 import qualified System.Directory as Dir
 import qualified System.FilePath as FP
 import System.FilePath ((</>), (<.>))
@@ -701,10 +702,9 @@ checkInside name p1 status =
 
 
 compile :: Env -> DocsNeed -> Details.Local -> B.ByteString -> Map.Map ModuleName.Raw I.Interface -> Src.Module -> IO Result
-compile (Env key root projectType _ buildID _ _) docsNeed (Details.Local path time deps main lastChange _) source ifaces modul =
-  let
-    pkg = projectTypeToPkg projectType
-  in
+compile (Env key root projectType _ buildID _ _) docsNeed (Details.Local path time deps main lastChange _) source ifaces modul = do
+  start <- SC.getTime SC.Monotonic
+  let pkg = projectTypeToPkg projectType
   case Compile.compile pkg ifaces modul of
     Right (Compile.Artifacts canonical annotations objects) ->
       case makeDocs docsNeed canonical of
@@ -713,7 +713,8 @@ compile (Env key root projectType _ buildID _ _) docsNeed (Details.Local path ti
             Error.Module (Src.getName modul) path time source (Error.BadDocs err)
 
         Right docs ->
-          do  let name = Src.getName modul
+          do  end <- SC.getTime SC.Monotonic
+              let name = Src.getName modul
               let iface = I.fromModule pkg canonical annotations
               let elmi = Stuff.elmi root name
               File.writeBinary (Stuff.elmo root name) objects
@@ -721,14 +722,14 @@ compile (Env key root projectType _ buildID _ _) docsNeed (Details.Local path ti
               case maybeOldi of
                 Just oldi | oldi == iface ->
                   do  -- iface should be fully forced by equality check
-                      Reporting.report key Reporting.BDone
+                      Reporting.report key (Reporting.BDone path start end)
                       let local = Details.Local path time deps main lastChange buildID
                       return (RSame local iface objects docs)
 
                 _ ->
                   do  -- iface may be lazy still
                       File.writeBinary elmi iface
-                      Reporting.report key Reporting.BDone
+                      Reporting.report key (Reporting.BDone path start end)
                       let local = Details.Local path time deps main buildID buildID
                       return (RNew local iface objects docs)
 
@@ -1168,14 +1169,15 @@ checkRoot env@(Env _ root _ _ _ _ _) results rootStatus =
 
 
 compileOutside :: Env -> Details.Local -> B.ByteString -> Map.Map ModuleName.Raw I.Interface -> Src.Module -> IO RootResult
-compileOutside (Env key _ projectType _ _ _ _) (Details.Local path time _ _ _ _) source ifaces modul =
+compileOutside (Env key _ projectType _ _ _ _) (Details.Local path time _ _ _ _) source ifaces modul = do
+  start <- SC.getTime SC.Monotonic
   let
     pkg = projectTypeToPkg projectType
     name = Src.getName modul
-  in
   case Compile.compile pkg ifaces modul of
     Right (Compile.Artifacts canonical annotations objects) ->
-      do  Reporting.report key Reporting.BDone
+      do  end <- SC.getTime SC.Monotonic
+          Reporting.report key (Reporting.BDone path start end)
           return $ ROutsideOk name (I.fromModule pkg canonical annotations) objects
 
     Left errors ->

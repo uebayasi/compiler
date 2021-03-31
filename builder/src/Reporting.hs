@@ -31,6 +31,10 @@ import Control.Exception (SomeException, AsyncException(UserInterrupt), catch, f
 import Control.Monad (when)
 import qualified Data.ByteString.Builder as B
 import qualified Data.NonEmptyList as NE
+import qualified Data.Time.Clock as TC
+import qualified Data.Time.Clock.System as TCS
+import qualified Data.Time.Clock.TAI as TCT
+import qualified System.Clock as SC
 import qualified System.Exit as Exit
 import qualified System.Info as Info
 import System.IO (hFlush, hPutStr, hPutStrLn, stderr, stdout)
@@ -320,7 +324,7 @@ trackBuild style callback =
 
           _ <- forkIO $
             do  takeMVar mvar
-                putStrFlush "Compiling ..."
+                -- putStrFlush "Compiling ..."
                 buildLoop chan 0
                 putMVar mvar ()
 
@@ -330,16 +334,25 @@ trackBuild style callback =
 
 
 data BMsg
-  = BDone
+  = BDone FilePath SC.TimeSpec SC.TimeSpec
 
 
 buildLoop :: Chan (Either BMsg (BResult a)) -> Int -> IO ()
 buildLoop chan done =
   do  msg <- readChan chan
       case msg of
-        Left BDone ->
+        Left (BDone fp start end) ->
           do  let !done1 = done + 1
-              putStrFlush $ "\rCompiling (" ++ show done1 ++ ")"
+                  tsc2tai (SC.TimeSpec sec nsec) =
+                    let
+                      i64tow32 = round . fromIntegral
+                    in
+                      TCS.systemToTAITime $ TCS.MkSystemTime sec $ i64tow32 nsec
+                  sa = tsc2tai start
+                  ea = tsc2tai end
+                  d = TCT.diffAbsoluteTime ea sa
+              putStrLn $ "Compiled: " ++ fp
+              putStrLn $ "    Time: " ++ show d
               buildLoop chan done1
 
         Right result ->
